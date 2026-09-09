@@ -57,8 +57,9 @@ def publish_item(item: dict) -> str:
         },
     )
     if not container_resp.ok:
-    print(f"[publisher] Meta error: {container_resp.text}")
-    container_resp.raise_for_status()
+        print(f"[publisher] Meta error: {container_resp.text}")
+        container_resp.raise_for_status()
+    
     creation_id = container_resp.json()["id"]
 
     # Step 2: publish the container
