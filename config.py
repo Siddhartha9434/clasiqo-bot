@@ -24,7 +24,7 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # small, fast, free (sentence-transformers
 
 # --- LLM backend ---
 # Cloud (used automatically whenever GROQ_API_KEY is set, e.g. in GitHub Actions):
-GROQ_MODEL = "llama-3.1-8b-instant"  # free tier on Groq; swap for another Groq model if you like
+GROQ_MODEL = "openai/gpt-oss-20b"  # free tier on Groq; swap for another Groq model if you like
 # Local fallback (used only when GROQ_API_KEY is NOT set, e.g. running on your own laptop):
 OLLAMA_MODEL = "llama3.1:8b"
 OLLAMA_HOST = "http://localhost:11434"
