@@ -56,6 +56,8 @@ def publish_item(item: dict) -> str:
             "access_token": IG_ACCESS_TOKEN,
         },
     )
+    if not container_resp.ok:
+    print(f"[publisher] Meta error: {container_resp.text}")
     container_resp.raise_for_status()
     creation_id = container_resp.json()["id"]
 
