@@ -41,6 +41,9 @@ jobs:
         run: |
           git config user.name "madrid-bot"
           git config user.email "actions@github.com"
-          git add -f madrid_bot.db generated_images
+          mkdir -p generated_images
+          touch generated_images/.gitkeep
+          git add -f generated_images
+          git add -f madrid_bot.db 2>/dev/null || true
           git diff --cached --quiet || git commit -m "Automated pipeline run [skip ci]"
           git push
