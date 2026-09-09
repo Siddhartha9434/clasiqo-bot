@@ -1,0 +1,46 @@
+name: Run Madrid Bot Pipeline
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: madrid-bot-pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run full pipeline
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
+          AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || 'false' }}
+        run: python main.py
+
+      - name: Commit generated files
+        run: |
+          git config user.name "madrid-bot"
+          git config user.email "actions@github.com"
+          git add -f madrid_bot.db generated_images
+          git diff --cached --quiet || git commit -m "Automated pipeline run [skip ci]"
+          git push
