@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import requests
+print(f"[publisher] Token received: {len(__import__('os').environ.get('IG_ACCESS_TOKEN', ''))} characters")
 
 from config import (
     IG_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID, IG_GRAPH_API_VERSION,
