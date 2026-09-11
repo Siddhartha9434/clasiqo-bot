@@ -3,47 +3,63 @@ name: Run Madrid Bot Pipeline
 on:
   schedule:
     - cron: "*/30 * * * *"
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-concurrency:
-  group: madrid-bot-pipeline
-  cancel-in-progress: false
+  workflow_dispatch: {}
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run full pipeline
+      # 1. Fetch + dedupe + analyze + caption + image + approval.
+      #    This creates the image files locally but does NOT publish yet.
+      - name: Build content (no publishing)
         env:
+          # if analyzer/caption_gen call a hosted LLM, its key goes here too
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
-          PUBLIC_IMAGE_BASE_URL: ${{ secrets.PUBLIC_IMAGE_BASE_URL }}
-          AUTO_PUBLISH: ${{ vars.AUTO_PUBLISH || 'false' }}
-        run: python main.py
+        run: |
+          python sources.py
+          python dedupe.py
+          python analyzer.py
+          python caption_gen.py
+          python image_gen.py
+          python approval.py
 
-      - name: Commit generated files
+      # 2. Commit + PUSH the newly generated images and DB *before* we try
+      #    to publish anything. Instagram fetches the image_url itself, so
+      #    it must already exist on GitHub's raw CDN when we call the API.
+      - name: Commit and push generated images
         run: |
           git config user.name "madrid-bot"
           git config user.email "actions@github.com"
-          mkdir -p generated_images
-          touch generated_images/.gitkeep
-          git add -f generated_images
-          git add -f madrid_bot.db 2>/dev/null || true
-          git diff --cached --quiet || git commit -m "Automated pipeline run [skip ci]"
+          git add madrid_bot.db generated_images || true
+          git diff --cached --quiet || git commit -m "Automated content generation"
+          git push
+
+      # 3. Give GitHub's raw CDN a few seconds to actually serve the new
+      #    files. It's usually near-instant but not guaranteed to be
+      #    available in the same second as the push.
+      - name: Wait for raw CDN to catch up
+        run: sleep 15
+
+      # 4. Now publish. The image URLs referenced in this step are the ones
+      #    we just pushed in step 2, so they're live on GitHub by now.
+      - name: Publish to Instagram
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+        run: python publisher.py --auto
+
+      # 5. publisher.py updates madrid_bot.db (status -> posted). Commit that too.
+      - name: Commit post status
+        run: |
+          git add madrid_bot.db
+          git diff --cached --quiet || git commit -m "Update post status"
           git push
