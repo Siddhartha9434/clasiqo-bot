@@ -5,6 +5,9 @@ on:
     - cron: "*/30 * * * *"
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -39,7 +42,7 @@ jobs:
         run: |
           git config user.name "madrid-bot"
           git config user.email "actions@github.com"
-          git add madrid_bot.db generated_images || true
+          git add -f madrid_bot.db generated_images
           git diff --cached --quiet || git commit -m "Automated content generation"
           git push
 
