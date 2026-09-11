@@ -59,7 +59,7 @@ FONT_PATH_REGULAR = "assets/fonts/Inter-Regular.ttf"
 # Read from environment / GitHub Secrets - never hardcode real values here.
 IG_ACCESS_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "")
 IG_BUSINESS_ACCOUNT_ID = os.environ.get("IG_BUSINESS_ACCOUNT_ID", "")
-IG_GRAPH_API_VERSION = "v21.0"
+IG_GRAPH_API_VERSION = "v23.0"
 
 # --- Public image hosting for IG API (IG requires a public image URL, not a file upload) ---
 # Free option used by this project: generated images are committed back to this
