@@ -1,29 +1,35 @@
 """
 Agent 5 - Publisher.
-Posts approved items to Instagram via the Graph API (free to use once your
-Business/Creator account + app are approved for content publishing).
+Posts approved items to Instagram via the Graph API.
 
-IMPORTANT: Instagram's API requires a PUBLICLY reachable image URL - it will
-not accept a local file upload directly. Cheapest free option: commit
-generated images to a public GitHub repo and reference the raw.githubusercontent.com
-URL, or use any free static file host. Set PUBLIC_IMAGE_BASE_URL in config.py.
+Your app uses Instagram Login (not Facebook Login), so this uses:
+  - graph.instagram.com as the host (NOT graph.facebook.com)
+  - an Instagram User access token
+  - the instagram_business_content_publish permission
 
 Usage:
-  python publisher.py --auto     # posts only items with status 'queued' AND importance >= AUTO_POST_THRESHOLD
-  python publisher.py --approve 12   # manually approve+post item id 12
-  python publisher.py --list     # show what's pending
+  python publisher.py --auto             # posts items above the auto-post importance threshold
+  python publisher.py --approve 12       # manually approve+post item id 12
+  python publisher.py --list             # show what's pending
 """
 import argparse
+import os
+import time
 import requests
-print(f"[publisher] Token received: {len(__import__('os').environ.get('IG_ACCESS_TOKEN', ''))} characters")
 
-from config import (
-    IG_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID, IG_GRAPH_API_VERSION,
-    PUBLIC_IMAGE_BASE_URL, AUTO_POST_THRESHOLD,
-)
+from config import IG_BUSINESS_ACCOUNT_ID, PUBLIC_IMAGE_BASE_URL, AUTO_POST_THRESHOLD
 import db
 
-GRAPH_BASE = f"https://graph.instagram.com/{IG_GRAPH_API_VERSION}"
+# Read the token from the environment (GitHub Actions secret) rather than
+# hardcoding it in config.py - keeps it out of source control.
+IG_ACCESS_TOKEN = os.environ.get("IG_ACCESS_TOKEN", "")
+IG_BUSINESS_ACCOUNT_ID = os.environ.get("IG_BUSINESS_ACCOUNT_ID", IG_BUSINESS_ACCOUNT_ID)
+
+GRAPH_API_VERSION = "v23.0"
+GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
+
+MAX_STATUS_CHECKS = 10
+STATUS_CHECK_DELAY_SECONDS = 5
 
 
 def _check_config():
@@ -37,16 +43,58 @@ def _check_config():
     if missing:
         raise RuntimeError(
             f"Missing config values before you can post: {', '.join(missing)}. "
-            f"Fill these in config.py once your Instagram Graph API access is approved."
+            f"Set them as GitHub secrets (IG_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID) "
+            f"and PUBLIC_IMAGE_BASE_URL in config.py."
         )
 
 
+def _wait_for_container_ready(creation_id: str):
+    """Poll the container until Instagram finishes downloading/processing the image."""
+    for attempt in range(MAX_STATUS_CHECKS):
+        status_resp = requests.get(
+            f"{GRAPH_BASE}/{creation_id}",
+            params={"fields": "status_code,status", "access_token": IG_ACCESS_TOKEN},
+        )
+        if not status_resp.ok:
+            print(f"[publisher] Status check error: {status_resp.text}")
+            status_resp.raise_for_status()
+
+        status_data = status_resp.json()
+        status_code = status_data.get("status_code")
+        print(f"[publisher] Container {creation_id} status: {status_code} (attempt {attempt + 1})")
+
+        if status_code == "FINISHED":
+            return
+        if status_code == "ERROR":
+            raise RuntimeError(f"Instagram container processing failed: {status_data}")
+
+        time.sleep(STATUS_CHECK_DELAY_SECONDS)
+
+    raise RuntimeError(
+        f"Container {creation_id} did not finish processing after "
+        f"{MAX_STATUS_CHECKS * STATUS_CHECK_DELAY_SECONDS}s. "
+        f"Common cause: the image URL wasn't publicly reachable yet when "
+        f"the container was created - check it hasn't been pushed to GitHub "
+        f"yet, or that the repo/branch/path in PUBLIC_IMAGE_BASE_URL is correct."
+    )
+
+
 def publish_item(item: dict) -> str:
-    """Create the media container, then publish it. Returns the IG post ID."""
+    """Create the media container, wait until it's ready, then publish it."""
     _check_config()
 
     image_filename = item["image_path"].split("/")[-1]
     public_url = PUBLIC_IMAGE_BASE_URL.rstrip("/") + "/" + image_filename
+
+    # Sanity check: fail fast with a clear message if the image genuinely
+    # isn't reachable yet, instead of burning through the status-poll loop.
+    check = requests.head(public_url, timeout=10)
+    if check.status_code != 200:
+        raise RuntimeError(
+            f"Image URL not reachable (HTTP {check.status_code}): {public_url}\n"
+            f"Make sure this file has been committed AND pushed to GitHub "
+            f"before this step runs."
+        )
 
     # Step 1: create media container
     container_resp = requests.post(
@@ -58,12 +106,16 @@ def publish_item(item: dict) -> str:
         },
     )
     if not container_resp.ok:
-        print(f"[publisher] Meta error: {container_resp.text}")
+        print(f"[publisher] Meta container error: {container_resp.text}")
         container_resp.raise_for_status()
-    
-    creation_id = container_resp.json()["id"]
 
-    # Step 2: publish the container
+    creation_id = container_resp.json()["id"]
+    print(f"[publisher] Container created: {creation_id}")
+
+    # Step 2: wait until Instagram has actually finished downloading/processing it
+    _wait_for_container_ready(creation_id)
+
+    # Step 3: publish
     publish_resp = requests.post(
         f"{GRAPH_BASE}/{IG_BUSINESS_ACCOUNT_ID}/media_publish",
         data={
@@ -71,9 +123,11 @@ def publish_item(item: dict) -> str:
             "access_token": IG_ACCESS_TOKEN,
         },
     )
-    publish_resp.raise_for_status()
-    post_id = publish_resp.json()["id"]
-    return post_id
+    if not publish_resp.ok:
+        print(f"[publisher] Meta publish error: {publish_resp.text}")
+        publish_resp.raise_for_status()
+
+    return publish_resp.json()["id"]
 
 
 def run_auto():
@@ -112,9 +166,9 @@ def run_approve(item_id: int):
 if __name__ == "__main__":
     db.init_db()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--auto", action="store_true", help="Post all items above the auto-post importance threshold")
-    parser.add_argument("--approve", type=int, help="Manually approve and post a specific item ID")
-    parser.add_argument("--list", action="store_true", help="List items pending review")
+    parser.add_argument("--auto", action="store_true")
+    parser.add_argument("--approve", type=int)
+    parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
     if args.list:
