@@ -23,7 +23,7 @@ from config import (
 )
 import db
 
-GRAPH_BASE = f"https://graph.facebook.com/{IG_GRAPH_API_VERSION}"
+GRAPH_BASE = f"https://graph.instagram.com/{IG_GRAPH_API_VERSION}"
 
 
 def _check_config():
